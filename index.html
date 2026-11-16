@@ -1,0 +1,135 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Custo por Tarefa de Agentes de IA – FinOps de IA</title>
+<meta name="description" content="Compare cenários de agentes de IA pelo custo por tarefa concluída com sucesso, não pelo preço por token." />
+<style>
+  :root { --bg:#f7f6f2; --card:#fff; --text:#1f1c14; --muted:#6b6658; --accent:#c2410c; --line:#ebe7dc; --c1:#c2410c; --c2:#0f766e; --c3:#4338ca; }
+  * { box-sizing:border-box; }
+  body { margin:0; font-family:system-ui,-apple-system,"Segoe UI",sans-serif; background:var(--bg); color:var(--text); }
+  header { padding:28px 5vw 8px; }
+  header h1 { margin:0 0 6px; font-size:clamp(1.5rem,3vw,2.1rem); }
+  header p { margin:0; color:var(--muted); max-width:800px; }
+  main { padding:20px 5vw 40px; display:grid; gap:20px; }
+  .grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(260px,1fr)); gap:16px; }
+  .card { background:var(--card); border:1px solid var(--line); border-radius:14px; padding:18px; }
+  .card h2 { margin:0 0 4px; font-size:1.05rem; display:flex; align-items:center; gap:8px; }
+  .dot { width:12px; height:12px; border-radius:50%; display:inline-block; }
+  .card input.name { font-weight:700; border:0; padding:0; font-size:1.05rem; width:100%; }
+  label { display:block; font-size:.8rem; color:var(--muted); margin:10px 0 3px; }
+  input { width:100%; padding:8px 10px; border:1px solid var(--line); border-radius:8px; font-size:.95rem; }
+  .two { display:grid; grid-template-columns:1fr 1fr; gap:8px; }
+  .result { margin-top:14px; padding-top:12px; border-top:1px dashed var(--line); font-size:.9rem; line-height:1.7; }
+  .result b { font-variant-numeric:tabular-nums; }
+  .big { font-size:1.5rem; }
+  .global { display:grid; grid-template-columns:repeat(auto-fit,minmax(200px,1fr)); gap:12px; align-items:end; }
+  .winner { padding:12px 14px; border-radius:10px; background:#fff3e8; color:#7a2e08; font-weight:600; margin-top:14px; }
+  .note { font-size:.82rem; color:var(--muted); line-height:1.5; }
+  svg text { font-size:12px; fill:var(--muted); }
+  footer { text-align:center; color:var(--muted); font-size:.85rem; padding:0 0 30px; }
+  footer a { color:var(--accent); }
+</style>
+</head>
+<body>
+<header>
+  <h1>🤖 Quanto custa cada tarefa que o seu agente de IA conclui?</h1>
+  <p>Preço por token não mostra o custo real. Um modelo barato que erra mais pode sair caro, porque cada tentativa falha também é paga. Compare cenários pelo <b>custo por tarefa concluída com sucesso</b>.</p>
+</header>
+<main>
+  <section class="card global">
+    <div><label for="tasks">Tarefas por mês</label><input id="tasks" type="number" min="1" value="20000" /></div>
+    <div><label for="fx">Cotação do dólar (R$)</label><input id="fx" type="number" step="0.01" min="0" value="5.40" /></div>
+    <p class="note" style="margin:0">Os preços abaixo são <b>ilustrativos</b>. Substitua pelos valores da tabela oficial do seu provedor (US$ por milhão de tokens).</p>
+  </section>
+
+  <section class="grid" id="scenarios"></section>
+
+  <section class="card" aria-live="polite">
+    <h2 style="margin:0 0 8px">Custo mensal por cenário (R$)</h2>
+    <svg id="chart" viewBox="0 0 640 170" width="100%" role="img" aria-label="Comparação do custo mensal"></svg>
+    <div class="winner" id="winner"></div>
+    <p class="note">Como calculamos: custo por tentativa = passos × (tokens de entrada × preço de entrada + tokens de saída × preço de saída) ÷ 1.000.000. Se a taxa de sucesso é p e a tarefa é refeita até dar certo, são em média 1/p tentativas. Logo, custo por tarefa concluída = custo por tentativa ÷ p.</p>
+  </section>
+</main>
+<footer>Projeto autoral de <b>Monique da Silva Cruz</b> · <a href="https://github.com/MoniqueSilva79/custo-agentes-ia">código no GitHub</a> · cálculo 100% no navegador</footer>
+
+<script>
+const $ = id => document.getElementById(id);
+const COLORS = ['var(--c1)', 'var(--c2)', 'var(--c3)'];
+const HEX = ['#c2410c', '#0f766e', '#4338ca'];
+// Cenários de exemplo com preços ilustrativos (US$ por 1M de tokens)
+const S = [
+  { name: 'Modelo grande', steps: 6, tin: 3000, tout: 600, pin: 3.00, pout: 15.00, success: 92 },
+  { name: 'Modelo pequeno', steps: 8, tin: 3000, tout: 700, pin: 0.30, pout: 2.50, success: 30 },
+  { name: 'Roteamento (pequeno + grande)', steps: 7, tin: 3000, tout: 650, pin: 0.90, pout: 5.50, success: 88 },
+];
+const FIELDS = [
+  ['steps', 'Passos (chamadas ao modelo) por tentativa', 1],
+  ['tin', 'Tokens de entrada por passo', 100], ['tout', 'Tokens de saída por passo', 50],
+  ['pin', 'US$ / 1M tokens de entrada', 0.01], ['pout', 'US$ / 1M tokens de saída', 0.01],
+  ['success', 'Taxa de sucesso por tentativa (%)', 1],
+];
+const brl = v => v.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL', minimumFractionDigits: v < 1 ? 4 : 2, maximumFractionDigits: v < 1 ? 4 : 2 });
+
+function render() {
+  $('scenarios').innerHTML = S.map((s, i) => `
+    <article class="card">
+      <h2><span class="dot" style="background:${COLORS[i]}"></span><input class="name" value="${s.name}" data-i="${i}" data-k="name" aria-label="Nome do cenário"></h2>
+      <div class="two">${FIELDS.map(([k, lbl, st]) => `
+        <div><label>${lbl}</label><input type="number" min="0" step="${st}" value="${s[k]}" data-i="${i}" data-k="${k}"></div>`).join('')}
+      </div>
+      <div class="result" id="res${i}"></div>
+    </article>`).join('');
+  calc();
+}
+
+function calc() {
+  const tasks = +$('tasks').value || 0, fx = +$('fx').value || 0;
+  const out = S.map((s, i) => {
+    const attempt = s.steps * (s.tin * s.pin + s.tout * s.pout) / 1e6;  // US$
+    const p = Math.min(Math.max(s.success, 1), 100) / 100;
+    const perTask = attempt / p * fx;                                     // R$
+    const monthly = perTask * tasks;
+    $('res' + i).innerHTML =
+      `Custo por tentativa: <b>${brl(attempt * fx)}</b><br>` +
+      `Tentativas por tarefa: <b>${(1 / p).toFixed(2).replace('.', ',')}</b><br>` +
+      `Custo por tarefa concluída: <b class="big">${brl(perTask)}</b><br>` +
+      `Por mês: <b>${brl(monthly)}</b>`;
+    return { name: s.name, monthly, perTask, attemptBrl: attempt * fx };
+  });
+  draw(out);
+  const best = out.reduce((a, b) => (a.monthly <= b.monthly ? a : b));
+  const cheapestAttempt = out.reduce((a, b) => (a.attemptBrl <= b.attemptBrl ? a : b));
+  const worst = out.reduce((a, b) => (a.monthly >= b.monthly ? a : b));
+  let msg = `🏆 Mais econômico por tarefa concluída: “${best.name}”, ${brl(best.monthly)}/mês, ${brl(worst.monthly - best.monthly)} a menos que o cenário mais caro.`;
+  if (cheapestAttempt.name !== best.name) msg += ` Repare: “${cheapestAttempt.name}” tem a tentativa mais barata, mas perde no custo final por errar mais.`;
+  $('winner').textContent = msg;
+}
+
+function draw(out) {
+  const W = 640, rowH = 46, pl = 200, pr = 120;
+  const max = Math.max(...out.map(o => o.monthly), 1);
+  $('chart').setAttribute('viewBox', `0 0 ${W} ${out.length * rowH + 10}`);
+  $('chart').innerHTML = out.map((o, i) => {
+    const w = (W - pl - pr) * o.monthly / max;
+    const y = 8 + i * rowH;
+    const label = o.name.length > 28 ? o.name.slice(0, 27) + '…' : o.name;
+    return `<text x="${pl - 10}" y="${y + 20}" text-anchor="end">${label}</text>
+            <rect x="${pl}" y="${y + 4}" width="${Math.max(w, 2)}" height="24" rx="6" fill="${HEX[i]}"></rect>
+            <text x="${pl + w + 8}" y="${y + 21}" style="fill:#1f1c14;font-weight:600">${brl(o.monthly)}</text>`;
+  }).join('');
+}
+
+$('scenarios').addEventListener('input', e => {
+  const { i, k } = e.target.dataset;
+  if (i === undefined) return;
+  S[i][k] = k === 'name' ? e.target.value : +e.target.value;
+  calc();
+});
+['tasks', 'fx'].forEach(id => $(id).addEventListener('input', calc));
+render();
+</script>
+</body>
+</html>
